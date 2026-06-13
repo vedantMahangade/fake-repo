@@ -1,0 +1,25 @@
+{
+  "name": "fake-repo",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vedantMahangade/fake-repo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/vedantMahangade/fake-repo/issues"
+  },
+  "homepage": "https://github.com/vedantMahangade/fake-repo#readme",
+  "description": "",
+  "type": "module",
+  "dependencies": {
+    "@hashgraph/sdk": "^2.81.0",
+    "dotenv": "^17.4.2"
+  }
+}
