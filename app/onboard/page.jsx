@@ -144,7 +144,18 @@ export default function OnboardingPage() {
               <p className="text-success text-sm">Wallet created</p>
               <p className="font-mono text-sm">{result.accountId}</p>
               <p className="text-muted text-sm capitalize">{result.role ?? role}</p>
-              <p className="text-xs text-muted pt-2">Redirecting…</p>
+              {result.ens && (
+                <div className="pt-3 border-t border-border space-y-2">
+                  <p className="text-xs uppercase tracking-widest text-muted">Manual ENS binding</p>
+                  <p className="font-mono text-xs break-all">{result.ens.ensName}</p>
+                  <p className="text-xs text-muted">
+                    Create subname <span className="font-mono text-text">{result.ens.ensSubnameLabel}</span>{" "}
+                    under <span className="font-mono text-text">{result.ens.ensParentName}</span>, then add the
+                    printed text records.
+                  </p>
+                </div>
+              )}
+              <p className="text-xs text-muted pt-2">Redirecting...</p>
               <a
                 href={result.hashscanUrl ?? hashscanAccountUrl(result.accountId)}
                 target="_blank"

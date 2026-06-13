@@ -190,6 +190,17 @@ export default function WalletPage() {
         description="Own tickets, sell yours, and track bids — browse resale listings on each event in the marketplace."
       />
 
+      {wallet?.user?.ensName && (
+        <Card className="mb-6 space-y-2">
+          <p className="text-xs uppercase tracking-widest text-muted">ENS identity binding</p>
+          <p className="font-mono text-sm break-all">{wallet.user.ensName}</p>
+          <p className="text-xs text-muted">
+            Manual ENS records for this Hedera account are ready. Add them in ENS Manager under{" "}
+            <span className="font-mono text-text">{wallet.user.ensLabel}</span>.
+          </p>
+        </Card>
+      )}
+
       {(error || localError) && (
         <div className="mb-6">
           <Alert shakeKey={localError || error}>{localError || error}</Alert>

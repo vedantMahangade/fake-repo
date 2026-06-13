@@ -27,7 +27,13 @@ export async function GET(_request, { params }) {
     const formerTickets = listFormerTicketsByOwner(accountId);
 
     return NextResponse.json({
-      user: { accountId: user.account_id, role: user.role },
+      user: {
+        accountId: user.account_id,
+        role: user.role,
+        ensName: user.ens_name,
+        ensLabel: user.ens_label,
+        ensTextRecords: user.ens_records_json ? JSON.parse(user.ens_records_json) : null,
+      },
       tickets,
       formerTickets,
     });

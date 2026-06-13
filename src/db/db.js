@@ -16,6 +16,15 @@ function runMigrations(database) {
       "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'purchaser'"
     );
   }
+  if (!userCols.find((c) => c.name === "ens_name")) {
+    database.exec("ALTER TABLE users ADD COLUMN ens_name TEXT");
+  }
+  if (!userCols.find((c) => c.name === "ens_label")) {
+    database.exec("ALTER TABLE users ADD COLUMN ens_label TEXT");
+  }
+  if (!userCols.find((c) => c.name === "ens_records_json")) {
+    database.exec("ALTER TABLE users ADD COLUMN ens_records_json TEXT");
+  }
 
   const ticketCols = database.prepare("PRAGMA table_info(tickets)").all();
   if (ticketCols.length > 0 && !ticketCols.find((c) => c.name === "metadata_json")) {

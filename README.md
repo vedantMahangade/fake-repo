@@ -21,6 +21,7 @@ Fill in `.env`:
 | Variable | Source |
 |---|---|
 | `OPERATOR_ID`, `OPERATOR_KEY` | [portal.hedera.com](https://portal.hedera.com) (testnet) |
+| `ENS_PARENT_NAME` | ENS parent name you control, e.g. `fairpass.eth` |
 | `WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_RP_SIGNING_KEY` | [developer.worldcoin.org](https://developer.worldcoin.org) |
 | `WORLD_ACTION` | Action name you create in the portal (e.g. `ticket-onboarding`) |
 | `NEXT_PUBLIC_*` | Same World ID values for the browser |
@@ -49,6 +50,31 @@ Open `http://localhost:3000` (or the **Network** URL from the terminal when test
 | `/organizer` | Create collections (max supply + face value), view sold/remaining |
 
 **Session:** account ID is stored in browser `localStorage`. Use **Log out** in the nav to switch users on the same device.
+
+---
+
+## Hedera to ENS binding
+
+On onboarding, the app now generates a manual ENS identity binding for the newly created Hedera account.
+
+Example:
+
+```text
+Hedera account: 0.0.9220958
+ENS subname: 0-0-9220958.fairpass.eth
+```
+
+Set `ENS_PARENT_NAME` in `.env` to the ENS parent name you control, such as `fairpass.eth`. The app does not write to ENS contracts directly. It prints and stores the exact ENS text records you should add in ENS Manager:
+
+```text
+hedera.account_id
+hedera.public_key
+hedera.network
+world.verified
+world.nullifier_hash
+```
+
+This keeps the hackathon flow simple: Hedera account creation is automated, while ENS subname creation remains manual.
 
 ---
 

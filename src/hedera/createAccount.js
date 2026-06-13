@@ -12,7 +12,11 @@ export async function createUserAccount(initialHbar = 60) {
       .setMaxAutomaticTokenAssociations(-1)     // auto-receive any token, no manual associate
       .execute(client);
     const accountId = (await tx.getReceipt(client)).accountId.toString();
-    return { accountId, privateKey: key.toStringDer() };
+    return {
+      accountId,
+      privateKey: key.toStringDer(),
+      publicKey: key.publicKey.toStringRaw(),
+    };
   } finally {
     client.close();
   }

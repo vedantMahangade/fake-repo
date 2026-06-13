@@ -3,7 +3,7 @@ import { getDb } from "./db.js";
 export function findByNullifier(nullifierHash) {
   return getDb()
     .prepare(
-      "SELECT nullifier_hash, account_id, private_key, role, created_at FROM users WHERE nullifier_hash = ?"
+      "SELECT nullifier_hash, account_id, private_key, ens_name, ens_label, ens_records_json, role, created_at FROM users WHERE nullifier_hash = ?"
     )
     .get(nullifierHash);
 }
@@ -11,18 +11,34 @@ export function findByNullifier(nullifierHash) {
 export function findByAccountId(accountId) {
   return getDb()
     .prepare(
-      "SELECT nullifier_hash, account_id, private_key, role, created_at FROM users WHERE account_id = ?"
+      "SELECT nullifier_hash, account_id, private_key, ens_name, ens_label, ens_records_json, role, created_at FROM users WHERE account_id = ?"
     )
     .get(accountId);
 }
 
-export function createUser({ nullifierHash, accountId, privateKey, role = "purchaser" }) {
+export function createUser({
+  nullifierHash,
+  accountId,
+  privateKey,
+  ensName = null,
+  ensLabel = null,
+  ensRecords = null,
+  role = "purchaser",
+}) {
   getDb()
     .prepare(
-      "INSERT INTO users (nullifier_hash, account_id, private_key, role) VALUES (?, ?, ?, ?)"
+      "INSERT INTO users (nullifier_hash, account_id, private_key, ens_name, ens_label, ens_records_json, role) VALUES (?, ?, ?, ?, ?, ?, ?)"
     )
-    .run(nullifierHash, accountId, privateKey, role);
-  return { nullifierHash, accountId, role };
+    .run(
+      nullifierHash,
+      accountId,
+      privateKey,
+      ensName,
+      ensLabel,
+      ensRecords ? JSON.stringify(ensRecords) : null,
+      role
+    );
+  return { nullifierHash, accountId, ensName, ensLabel, ensRecords, role };
 }
 
 export function setRole(accountId, role) {

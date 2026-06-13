@@ -3,6 +3,7 @@ import { createUserAccount } from "../../../src/hedera/createAccount.js";
 import { findByNullifier, createUser } from "../../../src/db/users.js";
 import { verifyWorldIdProof, extractNullifier } from "../../../src/world/verifyProof.js";
 import { saveState } from "../../../src/state.js";
+import { buildManualEnsBinding } from "../../../src/ens/identity.js";
 
 async function fetchEvmAddress(accountId) {
   await new Promise((r) => setTimeout(r, 5000));
@@ -44,11 +45,21 @@ export async function POST(request) {
 
     const buyer = await createUserAccount(60);
     const evmAddress = await fetchEvmAddress(buyer.accountId);
+    const ens = buildManualEnsBinding({
+      accountId: buyer.accountId,
+      publicKey: buyer.publicKey,
+      network: "testnet",
+      worldVerified: true,
+      nullifierHash,
+    });
 
     createUser({
       nullifierHash,
       accountId: buyer.accountId,
       privateKey: buyer.privateKey,
+      ensName: ens?.ensName,
+      ensLabel: ens?.ensSubnameLabel,
+      ensRecords: ens?.textRecords,
       role,
     });
 
@@ -59,6 +70,7 @@ export async function POST(request) {
       accountId: buyer.accountId,
       role,
       evmAddress,
+      ens,
       hashscanUrl: `https://hashscan.io/testnet/account/${buyer.accountId}`,
     });
   } catch (err) {
