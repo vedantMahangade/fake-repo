@@ -1,0 +1,82 @@
+import { NextResponse } from "next/server";
+import {
+  createListing,
+  listOpenListings,
+  expireStaleRecords,
+  getOpenListingForTicket,
+  LISTING_EXPIRY_HOURS,
+} from "../../../src/db/listings.js";
+import { getCurrentOwner, getTicket, updateTicketStatus } from "../../../src/db/tickets.js";
+import { getAccountIdFromRequest, requireUser } from "../../../src/lib/auth.js";
+
+export async function GET() {
+  try {
+    expireStaleRecords();
+    return NextResponse.json({ listings: listOpenListings() });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to load listings";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}
+
+export async function POST(request) {
+  try {
+    const accountId = getAccountIdFromRequest(request);
+    requireUser(accountId);
+
+    const body = await request.json();
+    const { tokenId, serial, askPriceHbar, minBidHbar } = body;
+
+    if (!tokenId || serial == null || askPriceHbar == null) {
+      return NextResponse.json(
+        { error: "tokenId, serial, and askPriceHbar are required" },
+        { status: 400 }
+      );
+    }
+
+    const ask = Number(askPriceHbar);
+    if (!Number.isFinite(ask) || ask <= 0) {
+      return NextResponse.json({ error: "askPriceHbar must be positive" }, { status: 400 });
+    }
+
+    const ticket = getTicket(tokenId, Number(serial));
+    if (!ticket) {
+      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+    }
+    if (ticket.status === "sold_secondary") {
+      return NextResponse.json({ error: "Ticket already sold on secondary market" }, { status: 400 });
+    }
+
+    const owner = getCurrentOwner(tokenId, Number(serial));
+    if (!owner || owner.owner_account_id !== accountId) {
+      return NextResponse.json({ error: "You do not own this ticket" }, { status: 403 });
+    }
+
+    const existing = getOpenListingForTicket(tokenId, Number(serial));
+    if (existing) {
+      return NextResponse.json(
+        { error: "An active listing already exists for this ticket", listingId: existing.id },
+        { status: 409 }
+      );
+    }
+
+    const listing = createListing({
+      tokenId,
+      serial: Number(serial),
+      sellerAccountId: accountId,
+      askPriceHbar: ask,
+      minBidHbar: minBidHbar != null ? Number(minBidHbar) : null,
+    });
+
+    updateTicketStatus(tokenId, Number(serial), "listed_for_resale");
+
+    return NextResponse.json({
+      success: true,
+      listing,
+      expiresInHours: LISTING_EXPIRY_HOURS,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to create listing";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
+}

@@ -42,6 +42,7 @@ export default function Nav() {
       }}
     >
       <Link href="/">Marketplace</Link>
+      <Link href="/listings">Resale listings</Link>
       {!accountId && <Link href="/login">Log in</Link>}
       <Link href="/onboard">Create wallet</Link>
       <Link href="/wallet">My Tickets</Link>

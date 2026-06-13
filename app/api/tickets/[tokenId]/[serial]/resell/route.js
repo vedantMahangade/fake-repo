@@ -1,17 +1,7 @@
 import { NextResponse } from "next/server";
-import { atomicResale } from "../../../../../../src/hedera/transferTicket.js";
-import { getToken } from "../../../../../../src/db/tokens.js";
-import {
-  getTicket,
-  getCurrentOwner,
-  updateTicketStatus,
-  recordOwnership,
-  countSecondaryByNullifier,
-} from "../../../../../../src/db/tickets.js";
-import { requireUser } from "../../../../../../src/lib/auth.js";
+import { settleSecondarySale } from "../../../../../../src/hedera/settleResale.js";
 import { verifyWorldIdProof, extractNullifier } from "../../../../../../src/world/verifyProof.js";
-
-const SECONDARY_CAP = Number(process.env.SECONDARY_PURCHASE_CAP ?? 1);
+import { requireUser } from "../../../../../../src/lib/auth.js";
 
 export async function POST(request, { params }) {
   try {
@@ -38,59 +28,21 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "Invalid proof" }, { status: 400 });
     }
 
-    const secondaryCount = countSecondaryByNullifier(buyerNullifier);
-    if (secondaryCount >= SECONDARY_CAP) {
-      return NextResponse.json(
-        { error: `Secondary purchase cap reached (${SECONDARY_CAP})` },
-        { status: 409 }
-      );
-    }
+    requireUser(sellerAccountId);
+    requireUser(buyerAccountId);
 
-    const token = getToken(tokenId);
-    if (!token) {
-      return NextResponse.json({ error: "Token not found" }, { status: 404 });
-    }
-
-    const ticket = getTicket(tokenId, serial);
-    if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
-    }
-
-    const owner = getCurrentOwner(tokenId, serial);
-    if (!owner || owner.owner_account_id !== sellerAccountId) {
-      return NextResponse.json({ error: "Seller does not own this ticket" }, { status: 400 });
-    }
-
-    const seller = requireUser(sellerAccountId);
-    const buyer = requireUser(buyerAccountId);
-
-    const result = await atomicResale({
+    const result = await settleSecondarySale({
       tokenId,
       serial,
-      sellerAccountId: seller.account_id,
-      sellerPrivateKey: seller.private_key,
-      buyerAccountId: buyer.account_id,
-      buyerPrivateKey: buyer.private_key,
+      sellerAccountId,
+      buyerAccountId,
       priceHbar: Number(priceHbar),
-    });
-
-    updateTicketStatus(tokenId, serial, "sold_secondary");
-    recordOwnership({
-      tokenId,
-      serial,
-      ownerAccountId: buyer.account_id,
-      ownerNullifier: buyerNullifier,
-      acquisition: "secondary",
-      priceHbar: Number(priceHbar),
-      txId: result.txId,
+      buyerNullifier,
     });
 
     return NextResponse.json({
       success: true,
-      txId: result.txId,
-      hashscanUrl: `https://hashscan.io/testnet/transaction/${result.txId}`,
-      royaltyNote: `${token.royalty_numerator}/${token.royalty_denominator} royalty sent to organizer ${token.organizer_account_id} on-chain`,
-      organizerAccountId: token.organizer_account_id,
+      ...result,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Resale failed";

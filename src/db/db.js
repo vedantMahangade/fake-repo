@@ -28,6 +28,37 @@ function runMigrations(database) {
       "ALTER TABLE tokens ADD COLUMN primary_price_hbar REAL NOT NULL DEFAULT 50"
     );
   }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS listings (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_id            TEXT NOT NULL,
+      serial              INTEGER NOT NULL,
+      seller_account_id   TEXT NOT NULL,
+      ask_price_hbar      REAL NOT NULL,
+      min_bid_hbar        REAL,
+      status              TEXT NOT NULL DEFAULT 'open',
+      expires_at          TEXT NOT NULL,
+      created_at          TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS bids (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      listing_id          INTEGER NOT NULL,
+      bidder_account_id   TEXT NOT NULL,
+      bid_price_hbar      REAL NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'pending',
+      expires_at          TEXT NOT NULL,
+      created_at          TEXT DEFAULT (datetime('now')),
+      responded_at        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_listings_status ON listings(status);
+    CREATE INDEX IF NOT EXISTS idx_listings_seller ON listings(seller_account_id);
+    CREATE INDEX IF NOT EXISTS idx_bids_listing ON bids(listing_id, status);
+    CREATE INDEX IF NOT EXISTS idx_bids_bidder ON bids(bidder_account_id, status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_listings_active_ticket
+      ON listings(token_id, serial)
+      WHERE status IN ('open', 'pending_settlement');
+  `);
 }
 
 function seedOperator(database) {
