@@ -16,7 +16,8 @@ async function fetchEvmAddress(accountId) {
 
 export async function POST(request) {
   try {
-    const { proof } = await request.json();
+    const { proof, role: requestedRole = "purchaser" } = await request.json();
+    const role = requestedRole === "organizer" ? "organizer" : "purchaser";
     const nullifierHash = extractNullifier(proof);
     if (!nullifierHash) {
       return NextResponse.json({ error: "Missing proof" }, { status: 400 });
@@ -35,6 +36,7 @@ export async function POST(request) {
         {
           error: "This human identity already has an account associated with it.",
           accountId: existing.account_id,
+          role: existing.role,
         },
         { status: 409 }
       );
@@ -47,6 +49,7 @@ export async function POST(request) {
       nullifierHash,
       accountId: buyer.accountId,
       privateKey: buyer.privateKey,
+      role,
     });
 
     saveState({ buyer: { ...buyer, evmAddress } });
@@ -54,6 +57,7 @@ export async function POST(request) {
     return NextResponse.json({
       success: true,
       accountId: buyer.accountId,
+      role,
       evmAddress,
       hashscanUrl: `https://hashscan.io/testnet/account/${buyer.accountId}`,
     });

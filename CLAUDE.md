@@ -6,9 +6,15 @@
 
 ## 1. What this is
 
-Each World Cup ticket is an NFT on Hedera. When the organizer mints a ticket they bake in a **10% royalty fee**: every time the NFT moves in an atomic swap (NFT transferred in exchange for HBAR in the same transaction), the organizer gets 10% of the sale price automatically and without any app-level code. Authenticity is cryptographically guaranteed — no counterfeits. A per-wallet secondary-purchase cap is enforced in the backend by requiring a **World ID proof-of-humanity** before completing a resale, so one person cannot hoard tickets.
+Each World Cup ticket is an NFT on Hedera. When the organizer creates a collection they bake in a **10% royalty fee**: every time the NFT moves in an atomic swap (NFT transferred in exchange for HBAR in the same transaction), the organizer gets 10% of the sale price automatically and without any app-level code. Authenticity is cryptographically guaranteed — no counterfeits.
 
-**What this is NOT:** there is no hard on-chain price cap. The royalty and the World ID cap together create strong disincentives for scalping, but a determined buyer can still overpay once. That framing matters for the pitch.
+**Mint-on-buy:** tickets are not pre-minted. The organizer sets `maxSupply` and **face value** only. When a purchaser buys, the backend mints one serial and transfers it in the same flow.
+
+**World ID gates:**
+- **Onboarding / login** — one nullifier → one Hedera account (Sybil protection at signup).
+- **Secondary purchase** — buyer must verify World ID; nullifier stored so one human = one secondary purchase (configurable cap).
+
+**What this is NOT:** there is no hard on-chain price cap on resales. The royalty and the World ID cap together create strong disincentives for scalping, but a determined buyer can still overpay once. That framing matters for the pitch.
 
 ---
 
@@ -17,7 +23,7 @@ Each World Cup ticket is an NFT on Hedera. When the organizer mints a ticket the
 | Prize | Track | Why we qualify |
 |---|---|---|
 | Hedera Tokenization | $3,000 — anchor | Custom fees / royalties, NFT mint, on-chain transfer |
-| World ID Track B | $2,500 | Onboarding + resale require World ID proof; nullifier stored so one human = one wallet / one secondary cap |
+| World ID Track B | $2,500 | Onboarding + login + resale require World ID; nullifier enforces one wallet + secondary cap |
 | ENS pool | Small bolt-on | ENS subdomain as a human-readable ticket address |
 | Hedera No-Solidity | $3,000 — fallback | HCS used as an audit log (second native Hedera service, zero Solidity) |
 
@@ -26,12 +32,12 @@ Each World Cup ticket is an NFT on Hedera. When the organizer mints a ticket the
 ## 3. Tech stack
 
 - **Runtime:** Node.js, ES modules (`"type": "module"` in package.json)
+- **App:** Next.js 16 (App Router) — single server for UI + API routes
 - **Hedera SDK:** `@hashgraph/sdk` v2.81+
 - **Network:** Hedera testnet (custodial accounts, operator pays all fees)
 - **Payment:** HBAR for the core sale; USDC planned later
 - **Proof of human:** `@worldcoin/idkit` v4 — IDKit widget + backend verify via `/api/v4/verify/{rp_id}`
-- **App:** Next.js 16 (App Router) — single server for UI + API routes
-- **Database:** SQLite (`better-sqlite3`) — nullifier → account mapping in `data/users.db`
+- **Database:** SQLite (`better-sqlite3`) — users, tokens, tickets, ownership in `data/users.db`
 
 > **SDK name trap:** The Hedera Playground and older snippets use `@hiero-ledger/sdk`. This repo uses `@hashgraph/sdk`. The API is identical; only the import changes. Don't mix them.
 
@@ -41,145 +47,221 @@ Each World Cup ticket is an NFT on Hedera. When the organizer mints a ticket the
 
 ```
 app/
-  page.jsx                         ← World ID onboarding UI (IDKitRequestWidget)
-  api/world-id/sign/route.js       ← RP signature (signRequest) for IDKit v4
-  api/verify-and-onboard/route.js  ← verify proof → sybil check → createUserAccount()
+  page.jsx                              ← Marketplace (mint-on-buy at face value)
+  login/page.jsx                        ← Returning user: World ID → existing account
+  onboard/page.jsx                      ← New user: World ID → create account + role
+  wallet/page.jsx                       ← My tickets, resale UI
+  organizer/page.jsx                    ← Create collections (maxSupply + faceValueHbar)
+  components/Nav.jsx                    ← Global nav, log out
+  lib/storage.js                        ← localStorage session (ticket_account_id)
+  api/
+    login/route.js                      ← verify proof → lookup existing user
+    verify-and-onboard/route.js         ← verify proof → createUserAccount(60)
+    world-id/sign/route.js              ← RP signature for IDKit v4
+    marketplace/route.js                ← collections with faceValueHbar, remaining
+    tokens/route.js                     ← POST create collection (organizer)
+    tokens/[tokenId]/buy/route.js       ← mint-on-buy primary purchase
+    tickets/[tokenId]/[serial]/resell/  ← atomic resale + World ID on buyer
+    wallet/[accountId]/route.js         ← tickets + ownership history
 
 src/
-  client.js                        ← shared Hedera client factory
-  state.js                         ← loadState() / saveState() for state.json
+  client.js                             ← shared Hedera client factory
+  state.js                              ← loadState() / saveState() for state.json
+  lib/auth.js                           ← requireUser(), requireRole()
   db/
-    schema.sql                     ← users table (nullifier_hash PRIMARY KEY)
-    users.js                       ← findByNullifier(), createUser()
+    schema.sql                          ← users, tokens, tickets, ownership
+    users.js, tokens.js, tickets.js, db.js
   world/
-    verifyProof.js                 ← verifyWorldIdProof(), extractNullifier()
+    verifyProof.js                      ← verifyWorldIdProof(), extractNullifier()
   hedera/
-    createToken.js                 ← createTicketToken() — NFT collection + royalty
-    createAccount.js               ← createUserAccount(initialHbar) — custodial buyer
-    mintTicket.js                  ← ⚠ NOT REFACTORED (old Playground format)
+    createToken.js                      ← createTicketToken() — NFT collection + royalty
+    createAccount.js                    ← createUserAccount(initialHbar) — custodial wallet
+    mintTicket.js                       ← mintTickets(tokenId, supplyKey, pointers)
+    primaryPurchase.js                  ← mint → primarySale → DB (sold_primary)
+    transferTicket.js                   ← primarySale(), atomicResale()
 
 scripts/
-  01-check-balance.js              ← operator HBAR balance
-  02-create-token.js               ← createTicketToken(), write state.json
-  03-create-account.js             ← dev bypass only (no World ID)
-  04-mint.js                       ← mintTickets() — blocked on mintTicket.js refactor
+  01-check-balance.js
+  02-create-token.js                    ← [maxSupply] [faceValueHbar] [name] [symbol]
+  03-create-account.js                  ← dev bypass only
+  04-mint.js                            ← DEPRECATED (use mint-on-buy)
+  05-primary-sale.js                    ← CLI mint-on-buy
+  06-resale.js                          ← CLI atomic resale
+  promote-organizer.js
+  reset-db.js
 ```
 
-**Rule:** `src/hedera/` functions are pure — no `console.log`, no `process.env` reads, they close the Hedera client before returning. Scripts and API routes are the runners: they read env, call the functions, log/return results, and read/write `state.json` or SQLite.
+**Rule:** `src/hedera/` functions are pure — no `console.log`, no `process.env` reads, they close the Hedera client before returning. Scripts and API routes are the runners.
 
-**`state.json`** — local store between script runs. Holds `tokenId`, all five token keys (DER-encoded), and latest `buyer`. Gitignored.
+**`state.json`** — local store for CLI scripts. Holds `tokenId`, token keys, latest `buyer`. Gitignored.
 
-**`data/users.db`** — SQLite store for World ID nullifier → Hedera account mapping. Gitignored. This is the Sybil gate: one nullifier per action = one account.
+**`data/users.db`** — SQLite for all app state. Gitignored. Contains custodial private keys — treat as secrets even on testnet.
 
-### World ID onboarding flow
+---
 
-```
-User → IDKit (browser) → World App QR → proof
-  → POST /api/verify-and-onboard
-    → verifyWorldIdProof() against developer.world.org
-    → findByNullifier() in SQLite
-    → if new: createUserAccount(60) + createUser() + saveState({ buyer })
-    → if duplicate: 409 with existing accountId
-```
+## 5. User roles
 
-IDKit v4 requires an RP signature before opening the widget. The frontend fetches `GET /api/world-id/sign` first, then opens `IDKitRequestWidget` with `deviceLegacy()` preset and `allow_legacy_proofs: true`. Proofs (v3 or v4 format) are forwarded byte-for-byte to `/api/v4/verify/{rp_id}` when `WORLD_RP_ID` is set.
-
-### Known broken / remaining work
-
-| File | Problem | Fix needed |
+| Role | How assigned | Can do |
 |---|---|---|
-| `src/hedera/mintTicket.js` | Old Playground format: `require("@hiero-ledger/sdk")`, hardcoded tokenId/key, no named export | Refactor to `export async function mintTickets(tokenId, supplyKey, pointers)` |
+| `organizer` | Selected on `/onboard` or promoted via `ADMIN_SECRET` | Create collections, receive primary sale HBAR + royalties |
+| `purchaser` | Default on onboard | Buy tickets at face value |
+| `reseller` | Auto-promoted after first primary purchase | Resell owned tickets |
+
+Operator account (`OPERATOR_ID`) is auto-seeded as `organizer` on first DB init.
 
 ---
 
-## 5. Key Hedera facts that bit us
+## 6. Pricing
 
-- **Token keys are permanent.** All keys (admin, supply, freeze, pause, metadata) must be set at creation time and can never be added or removed afterward. Decide upfront.
-- **NFT initial supply must be 0.** `setInitialSupply(0)` is required for `NonFungibleUnique` tokens. Any other value throws.
-- **NFT metadata ≤100 bytes.** The on-chain metadata field holds a short pointer URL (e.g. `https://yourapp.com/api/tickets/123.json`), not the full ticket data. Keep it short.
-- **Royalty only fires on an atomic swap.** The custom royalty fee only triggers when the NFT transfer and a HBAR/token payment happen in the same transaction (a `TransferTransaction` that moves both). A plain NFT transfer with no payment triggers only the fallback fee (fixed 5 HBAR).
-- **Mirror Node lags ~5 seconds.** After a transaction reaches consensus, the REST API at `https://testnet.mirrornode.hedera.com` takes a few seconds to index it. Script 03 and the onboarding API wait 5s before querying the EVM address.
+| Term | Set by | Stored in | Used for |
+|---|---|---|---|
+| **Face value** | Organizer at collection creation | `tokens.primary_price_hbar` | Primary marketplace buy |
+| **Resale price** | Seller on `/wallet` | `ownership.price_hbar` on secondary transfer | Fan-to-fan resales |
+
+Primary buy API ignores any client-sent price — always uses `token.primary_price_hbar`.
 
 ---
 
-## 6. Getting started
+## 7. Accounts vs tokens (HBAR)
 
-### One-time setup
+- **Account** — Hedera wallet (`0.0.xxxxx`). Holds HBAR balance and NFT serials.
+- **Token** — NFT collection ID (`0.0.yyyyy`). A definition only; does not hold HBAR.
+
+On onboarding, `createUserAccount(60)` transfers 60 HBAR from the **operator** into the new user's account (starter funds for fees + one ticket purchase). Token creation only pays a small network fee — no 60 HBAR transfer.
+
+---
+
+## 8. Auth & session
+
+Browser session = `localStorage` key `ticket_account_id`. Not server-side sessions.
+
+| Flow | Endpoint | Result |
+|---|---|---|
+| **Create wallet** | `POST /api/verify-and-onboard` | New Hedera account if nullifier unseen; 409 → use login |
+| **Log in** | `POST /api/login` | Restore existing account by nullifier; 404 if never onboarded |
+| **Log out** | Nav button | Clears localStorage → `/login` |
+
+World ID ties one human to one account permanently. Log out only clears the browser; the same person logging in again gets the same account.
+
+---
+
+## 9. Sale flows
+
+### Primary (mint-on-buy)
+
+```
+Purchaser → POST /api/tokens/{tokenId}/buy
+  → primaryPurchase()
+    → mintTickets(1 serial)
+    → primarySale(NFT + HBAR at face value)
+    → DB: status sold_primary, acquisition primary
+```
+
+Organizer treasury receives face-value HBAR. No royalty on primary sale (royalty is for resales).
+
+### Secondary (resale)
+
+```
+Seller on /wallet → buyer account ID + resale price → Resell
+  → buyer scans World ID
+  → POST /api/tickets/{tokenId}/{serial}/resell
+    → verify proof, check secondary cap on buyer nullifier
+    → atomicResale(NFT + HBAR in one TransferTransaction)
+    → 10% royalty to organizer on-chain automatically
+    → DB: status sold_secondary, acquisition secondary
+```
+
+Hackathon UX: seller initiates and enters buyer's account ID manually. No public resale listings page yet.
+
+---
+
+## 10. Key Hedera facts
+
+- **Token keys are permanent.** All keys (admin, supply, freeze, pause, metadata) must be set at creation time.
+- **NFT initial supply must be 0.** `setInitialSupply(0)` required for `NonFungibleUnique`.
+- **NFT metadata ≤100 bytes.** Short pointer URL only (e.g. `/api/tickets/{tokenId}/{serial}`).
+- **Royalty only fires on atomic swap.** NFT + HBAR in the same `TransferTransaction`. Plain NFT transfer triggers fallback fee (5 HBAR).
+- **Mirror Node lags ~5 seconds.** Wait before querying EVM address after account creation.
+
+---
+
+## 11. Environment variables
+
+```env
+OPERATOR_ID=0.0.xxxx
+OPERATOR_KEY=0x...
+
+WORLD_APP_ID=app_xxx
+WORLD_RP_ID=rp_xxx
+WORLD_RP_SIGNING_KEY=0x...
+WORLD_ACTION=ticket-onboarding
+WORLD_ENVIRONMENT=production
+
+NEXT_PUBLIC_WORLD_APP_ID=app_xxx
+NEXT_PUBLIC_WORLD_ACTION=ticket-onboarding
+NEXT_PUBLIC_WORLD_ENVIRONMENT=production
+
+APP_BASE_URL=http://localhost:3000
+ADMIN_SECRET=change-me
+SECONDARY_PURCHASE_CAP=1
+```
+
+For phone demos use `production`. For local dev use `staging` + World ID Simulator.
+
+---
+
+## 12. Getting started
 
 ```bash
 cd ~/Documents/Project/fake-repo
 npm install
 cp .env.example .env
-# Edit .env — see below
-```
+# fill in .env
 
-### Environment variables
-
-```env
-# Hedera (portal.hedera.com, testnet)
-OPERATOR_ID=0.0.xxxx
-OPERATOR_KEY=0x...
-
-# World ID — server (developer.worldcoin.org)
-WORLD_APP_ID=app_xxx
-WORLD_RP_ID=rp_xxx
-WORLD_RP_SIGNING_KEY=0x...
-WORLD_ACTION=ticket-onboarding
-WORLD_ENVIRONMENT=production   # or staging for simulator
-
-# World ID — client (Next.js, must match server values)
-NEXT_PUBLIC_WORLD_APP_ID=app_xxx
-NEXT_PUBLIC_WORLD_ACTION=ticket-onboarding
-NEXT_PUBLIC_WORLD_ENVIRONMENT=production
-```
-
-Create action `ticket-onboarding` in the World Developer Portal before testing. For phone demos use `production`; for local dev use `staging` + the World ID Simulator.
-
-### Run the web app
-
-```bash
 npm run dev
 # → http://localhost:3000
-# → Network URL for phone testing (same Wi‑Fi)
 ```
 
-### Run Hedera scripts (in order)
+**Demo path (two users):**
+1. User A → `/onboard` → Organizer → `/organizer` → create collection (face value e.g. 50 HBAR)
+2. User B → `/onboard` → Purchaser → `/` → Buy
+3. User B → `/wallet` → enter User C account ID + resale price → Resell → User C scans World ID
 
+**CLI alternative:**
 ```bash
 node scripts/01-check-balance.js
-node scripts/02-create-token.js
-node scripts/03-create-account.js   # dev bypass — production onboarding uses /api/verify-and-onboard
-node scripts/04-mint.js           # blocked until mintTicket.js is refactored
+node scripts/02-create-token.js 100 50 "World Cup Ticket" WCT
+node scripts/05-primary-sale.js
+node scripts/06-resale.js 1 75 0.0.seller 0.0.buyer
 ```
 
-Each script prints a HashScan URL — open it to confirm on-chain.
-
 ---
 
-## 7. Status & next steps
+## 13. Status & next steps
 
 **Done**
-- [x] `src/client.js` and `src/state.js`
-- [x] `02`: Token creation with 10% royalty + fallback fee — `tokenId` in state.json
-- [x] World ID onboarding — Next.js UI, RP signing, proof verify, SQLite nullifier store, Hedera account creation
-- [x] Sybil gate at onboarding — one nullifier → one Hedera account (409 on re-verify)
+- [x] Hedera client, state helpers, SQLite schema (users, tokens, tickets, ownership)
+- [x] World ID onboarding + login + logout
+- [x] Roles: organizer / purchaser / reseller
+- [x] Token creation with 10% royalty + organizer face value
+- [x] Mint-on-buy primary sales at face value
+- [x] Atomic resale with on-chain royalty + World ID on buyer + secondary cap
+- [x] Marketplace, wallet, organizer UI
+- [x] CLI scripts 01–03, 05–06, promote-organizer, reset-db
 
-**Blocked / in progress**
-- [ ] Refactor `src/hedera/mintTicket.js` into a proper named export (blocks script 04)
-
-**Up next (in order)**
-1. Atomic sale transaction (royalty lands on-chain) — `TransferTransaction` moving NFT + HBAR atomically
-2. World ID on secondary purchase — reuse nullifier table to enforce per-human resale cap
-3. HCS audit log — every ticket event written to a Hedera Consensus Service topic (qualifies for No-Solidity prize)
-4. Gate scan + ENS — QR code scan at the venue, ENS subdomain as ticket identity
+**Up next**
+1. Public resale listings marketplace (seller lists, buyer browses — no manual account ID entry)
+2. HCS audit log — every ticket event on a Consensus Service topic (No-Solidity prize)
+3. Gate scan + ENS — QR at venue, ENS subdomain as ticket identity
+4. Tie World ID proof nullifier to buyer account ID on resale (currently only checks secondary cap)
 
 ---
 
-## 8. Security
+## 14. Security
 
-- **Testnet only.** All keys and account IDs in this repo are for `testnet`. Never use mainnet keys in this codebase.
-- **Never commit `.env`.** It is in `.gitignore`. The file `.env.example` is the safe template.
-- **`state.json` is gitignored.** It contains private keys (supply, freeze, pause, metadata, admin). Do not commit it. Back it up somewhere safe; losing it means you cannot mint more tickets for that token.
-- **`data/users.db` is gitignored.** It contains custodial buyer private keys keyed by World ID nullifier. Do not commit it.
-- **`WORLD_RP_SIGNING_KEY` is server-only.** Never expose it via `NEXT_PUBLIC_*` or commit it.
-- For phone testing, add your LAN IP to `allowedDevOrigins` in `next.config.js` if Next.js blocks cross-origin dev requests.
+- **Testnet only.** Never use mainnet keys in this codebase.
+- **Never commit `.env`.** Operator key, World ID signing key, admin secret stay server-side.
+- **`data/users.db` is gitignored.** Custodial private keys for all users. Do not commit.
+- **`state.json` is gitignored.** Token supply/admin keys for CLI. Losing it means you cannot mint more for that token.
+- **`WORLD_RP_SIGNING_KEY` is server-only.** Never expose via `NEXT_PUBLIC_*`.
+- For phone testing, add LAN IP to `allowedDevOrigins` in `next.config.js`.
