@@ -1,3 +1,4 @@
+// Dev-only — production onboarding uses /api/verify-and-onboard.
 import { createUserAccount } from "../src/hedera/createAccount.js";
 import { saveState } from "../src/state.js";
 
