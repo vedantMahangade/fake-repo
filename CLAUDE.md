@@ -79,16 +79,20 @@ src/
     mintTicket.js                       ← mintTickets(tokenId, supplyKey, pointers)
     primaryPurchase.js                  ← mint → primarySale → DB (sold_primary)
     transferTicket.js                   ← primarySale(), atomicResale()
+    compliance.js                       ← freezeHolder/unfreezeHolder/pauseToken/unpauseToken
 
 scripts/
-  01-check-balance.js
-  02-create-token.js                    ← [maxSupply] [faceValueHbar] [name] [symbol]
-  03-create-account.js                  ← dev bypass only
-  04-mint.js                            ← DEPRECATED (use mint-on-buy)
-  05-primary-sale.js                    ← CLI mint-on-buy
-  06-resale.js                          ← CLI atomic resale
-  promote-organizer.js
-  reset-db.js
+  01-check-balance.js                   ← prove .env + network; print operator HBAR
+  02-create-token.js                    ← [maxSupply] [faceValueHbar] [name] [symbol]; requires operator seeded in DB (run app once first)
+  03-create-account.js                  ← dev bypass: create buyer without World ID; writes buyer → state.json
+  04-mint.js                            ← DEPRECATED (superseded by mint-on-buy in 05)
+  05-primary-sale.js                    ← CLI mint-on-buy; requires tokenId + buyer in state.json
+  06-resale.js                          ← CLI atomic resale; args: [serial] [priceHbar] [sellerAccountId] [buyerAccountId]
+  07-scan-gate.js                       ← gate entry: freeze holder on-chain + mark ticket used; arg: [serial]
+  08-pause-match.js                     ← pause/unpause whole token (cancelled match); arg: [unpause]
+  09-unfreeze.js                        ← reset helper: unfreeze holder + status→owned; arg: [serial]
+  promote-organizer.js                  ← set role=organizer for any account_id in DB
+  reset-db.js                           ← delete data/users.db; restart npm run dev to re-seed operator
 ```
 
 **Rule:** `src/hedera/` functions are pure — no `console.log`, no `process.env` reads, they close the Hedera client before returning. Scripts and API routes are the runners.
@@ -182,6 +186,7 @@ Hackathon UX: seller initiates and enters buyer's account ID manually. No public
 - **NFT metadata ≤100 bytes.** Short pointer URL only (e.g. `/api/tickets/{tokenId}/{serial}`).
 - **Royalty only fires on atomic swap.** NFT + HBAR in the same `TransferTransaction`. Plain NFT transfer triggers fallback fee (5 HBAR).
 - **Mirror Node lags ~5 seconds.** Wait before querying EVM address after account creation.
+- **Compliance layer:** Freeze is account-level, not per-serial — freezing a holder blocks transfer of *all* their tickets for that token. A frozen holder = entered/used = can't resell (rejected on-chain with `ACCOUNT_FROZEN_FOR_TOKEN`). Pause blocks the whole token (`TOKEN_IS_PAUSED`). Verified end-to-end on testnet.
 
 ---
 
@@ -227,12 +232,21 @@ npm run dev
 2. User B → `/onboard` → Purchaser → `/` → Buy
 3. User B → `/wallet` → enter User C account ID + resale price → Resell → User C scans World ID
 
-**CLI alternative:**
+**CLI alternative** (all scripts require the app to have run at least once so the operator is seeded in the DB):
 ```bash
-node scripts/01-check-balance.js
-node scripts/02-create-token.js 100 50 "World Cup Ticket" WCT
-node scripts/05-primary-sale.js
-node scripts/06-resale.js 1 75 0.0.seller 0.0.buyer
+node scripts/01-check-balance.js                          # verify .env + connectivity
+
+node scripts/02-create-token.js 100 50 "World Cup Ticket" WCT  # writes state.json + DB
+
+node scripts/03-create-account.js                         # dev-only buyer (skips World ID); writes buyer → state.json
+
+node scripts/05-primary-sale.js                           # reads tokenId + buyer from state.json
+
+node scripts/06-resale.js 1 75 0.0.seller 0.0.buyer       # serial priceHbar sellerAccountId buyerAccountId
+
+node scripts/promote-organizer.js 0.0.xxxx                # elevate any DB account to organizer
+
+node scripts/reset-db.js                                  # wipe DB; restart npm run dev to re-seed
 ```
 
 ---

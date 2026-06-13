@@ -4,3 +4,4 @@ state.json
 data/
 *.db
 .next/
+.DS_Store
