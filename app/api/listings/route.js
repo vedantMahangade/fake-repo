@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   createListing,
   listOpenListings,
+  listOpenListingsByToken,
   expireStaleRecords,
   getOpenListingForTicket,
   LISTING_EXPIRY_HOURS,
@@ -9,10 +10,12 @@ import {
 import { getCurrentOwner, getTicket, updateTicketStatus } from "../../../src/db/tickets.js";
 import { getAccountIdFromRequest, requireUser } from "../../../src/lib/auth.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
     expireStaleRecords();
-    return NextResponse.json({ listings: listOpenListings() });
+    const tokenId = new URL(request.url).searchParams.get("tokenId");
+    const listings = tokenId ? listOpenListingsByToken(tokenId) : listOpenListings();
+    return NextResponse.json({ listings });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load listings";
     return NextResponse.json({ error: message }, { status: 400 });
@@ -42,9 +45,6 @@ export async function POST(request) {
     const ticket = getTicket(tokenId, Number(serial));
     if (!ticket) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
-    }
-    if (ticket.status === "sold_secondary") {
-      return NextResponse.json({ error: "Ticket already sold on secondary market" }, { status: 400 });
     }
 
     const owner = getCurrentOwner(tokenId, Number(serial));

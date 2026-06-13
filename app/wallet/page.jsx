@@ -1,162 +1,75 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { IDKitRequestWidget, deviceLegacy } from "@worldcoin/idkit";
-import { getStoredAccountId, AUTH_EVENT } from "../lib/storage.js";
+import PageHeader from "../components/layout/PageHeader.jsx";
+import PageTransition, { AuthGate } from "../components/layout/PageTransition.jsx";
+import TicketCard from "../components/tickets/TicketCard.jsx";
+import BidList from "../components/tickets/BidList.jsx";
+import MyBidsPanel from "../components/tickets/MyBidsPanel.jsx";
+import { MarketplaceSaleCard, FormerTicketCard } from "../components/tickets/SaleHistoryCard.jsx";
+import Card from "../components/ui/Card.jsx";
+import Button from "../components/ui/Button.jsx";
+import Badge from "../components/ui/Badge.jsx";
+import Alert from "../components/ui/Alert.jsx";
+import { CardSkeleton } from "../components/ui/Skeleton.jsx";
+import { useWallet } from "../hooks/useWallet.js";
+import { useNotifications } from "../hooks/useNotifications.js";
+import { useAccount } from "../hooks/useAccount.js";
+import { useToast } from "../components/ui/ToastHost.jsx";
+import { apiPost, apiDelete } from "../lib/api.js";
 import { fetchRpContext, getWorldIdClientConfig } from "../lib/worldId.js";
+import { ticketDetailUrl, walletTabUrl } from "../lib/routes.js";
+import { fadeUpTransition } from "../lib/motion.js";
 
-const POLL_MS = Number(process.env.NEXT_PUBLIC_LISTING_POLL_MS ?? 15000);
+const TABS = [
+  { id: "tickets", label: "My tickets" },
+  { id: "selling", label: "Selling", sellerBadge: true },
+  { id: "bids", label: "My bids", buyerBadge: true },
+];
 
 export default function WalletPage() {
-  const [accountId, setAccountId] = useState(null);
-  const [wallet, setWallet] = useState(null);
-  const [sellerListings, setSellerListings] = useState([]);
-  const [myBids, setMyBids] = useState([]);
-  const [notifications, setNotifications] = useState(null);
-  const [error, setError] = useState(null);
-  const [askPrices, setAskPrices] = useState({});
-  const [confirmBidId, setConfirmBidId] = useState(null);
-  const [open, setOpen] = useState(false);
-  const [requestConfig, setRequestConfig] = useState(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { isOrganizer, loading: accountLoading } = useAccount();
+  const { wallet, sellerListings, salesHistory, formerTickets, myBids, loading, error, refresh, accountId } = useWallet();
+  const { actionCount, bidCount } = useNotifications();
+  const { toast } = useToast();
 
+  const initialTab = normalizeTab(searchParams.get("tab"));
+  const highlightBid = searchParams.get("bid");
+  const [tab, setTab] = useState(initialTab);
+  const [askPrices, setAskPrices] = useState({});
+  const [minBids, setMinBids] = useState({});
+  const [actionLoading, setActionLoading] = useState(null);
+  const [localError, setLocalError] = useState(null);
+
+  const [confirmBidId, setConfirmBidId] = useState(null);
+  const [worldIdOpen, setWorldIdOpen] = useState(false);
+  const [requestConfig, setRequestConfig] = useState(null);
   const { appId, action, environment } = getWorldIdClientConfig();
 
-  const headers = useCallback(
-    () => ({ "X-Account-Id": accountId, "Content-Type": "application/json" }),
-    [accountId]
-  );
-
-  const loadAll = useCallback(async (id) => {
-    const [walletRes, listingsRes, bidsRes, notifRes] = await Promise.all([
-      fetch(`/api/wallet/${id}`),
-      fetch("/api/listings/mine", { headers: { "X-Account-Id": id } }),
-      fetch("/api/bids/mine", { headers: { "X-Account-Id": id } }),
-      fetch(`/api/notifications?accountId=${id}`, { headers: { "X-Account-Id": id } }),
-    ]);
-
-    const walletData = await walletRes.json();
-    if (!walletRes.ok) throw new Error(walletData.error);
-
-    const listingsData = listingsRes.ok ? await listingsRes.json() : { listings: [] };
-    const bidsData = bidsRes.ok ? await bidsRes.json() : { bids: [] };
-    const notifData = notifRes.ok ? await notifRes.json() : null;
-
-    setWallet(walletData);
-    setSellerListings(listingsData.listings ?? []);
-    setMyBids(bidsData.bids ?? []);
-    setNotifications(notifData);
-  }, []);
-
   useEffect(() => {
-    const id = getStoredAccountId();
-    setAccountId(id);
-    if (id) loadAll(id).catch((e) => setError(e.message));
-
-    function onAuth() {
-      const next = getStoredAccountId();
-      setAccountId(next);
-      if (next) loadAll(next).catch((e) => setError(e.message));
+    if (!accountLoading && isOrganizer) {
+      router.replace("/events");
     }
-    window.addEventListener(AUTH_EVENT, onAuth);
-    return () => window.removeEventListener(AUTH_EVENT, onAuth);
-  }, [loadAll]);
+  }, [accountLoading, isOrganizer, router]);
 
   useEffect(() => {
-    if (!accountId) return;
-    const timer = setInterval(() => {
-      loadAll(accountId).catch(() => {});
-    }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [accountId, loadAll]);
-
-  async function listForResale(ticket) {
-    const key = `${ticket.tokenId}-${ticket.serial}`;
-    const ask = Number(askPrices[key] ?? 50);
-    if (!Number.isFinite(ask) || ask <= 0) {
-      setError("Enter a valid ask price");
+    const t = searchParams.get("tab");
+    if (t === "browse") {
+      router.replace("/");
       return;
     }
-    setError(null);
-    const res = await fetch("/api/listings", {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({
-        tokenId: ticket.tokenId,
-        serial: ticket.serial,
-        askPriceHbar: ask,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    alert(`Listed for ${ask} HBAR. Bidders can offer on /listings.`);
-    await loadAll(accountId);
-  }
+    if (t) setTab(normalizeTab(t));
+    if (highlightBid) setTab("bids");
+  }, [searchParams, highlightBid, router]);
 
-  async function cancelListing(listingId) {
-    setError(null);
-    const res = await fetch(`/api/listings/${listingId}`, {
-      method: "DELETE",
-      headers: headers(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    await loadAll(accountId);
-  }
-
-  async function acceptBid(bidId) {
-    setError(null);
-    const res = await fetch(`/api/bids/${bidId}/accept`, {
-      method: "POST",
-      headers: headers(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    if (data.balanceWarning) alert(`Accepted. Note: ${data.balanceWarning}`);
-    else alert("Bid accepted. Buyer must confirm in My Tickets.");
-    await loadAll(accountId);
-  }
-
-  async function declineBid(bidId) {
-    setError(null);
-    const res = await fetch(`/api/bids/${bidId}/decline`, {
-      method: "POST",
-      headers: headers(),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    await loadAll(accountId);
-  }
-
-  async function startConfirmBid(bidId) {
-    setConfirmBidId(bidId);
-    setError(null);
-    const rp_context = await fetchRpContext();
-    setRequestConfig({
-      app_id: appId,
-      action,
-      rp_context,
-      allow_legacy_proofs: true,
-      environment,
-      preset: deviceLegacy(),
-    });
-    setOpen(true);
-  }
-
-  async function handleVerify(proof) {
-    if (!confirmBidId) throw new Error("No bid selected");
-    const res = await fetch(`/api/bids/${confirmBidId}/confirm`, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({ proof }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    alert(`Purchase complete! ${data.royaltyNote}`);
-    setConfirmBidId(null);
-    await loadAll(accountId);
-    return data;
-  }
+  const acceptedBids = myBids.filter((b) => b.status === "accepted");
+  const pendingBids = myBids.filter((b) => b.status === "pending");
 
   function ticketHasActiveListing(ticket) {
     return sellerListings.some(
@@ -167,163 +80,355 @@ export default function WalletPage() {
     );
   }
 
-  if (!accountId) {
+  function selectTab(id) {
+    setTab(id);
+    router.replace(walletTabUrl(id), { scroll: false });
+  }
+
+  async function listForResale(ticket) {
+    const key = `${ticket.tokenId}-${ticket.serial}`;
+    const ask = Number(askPrices[key] ?? ticket.priceHbar ?? 0);
+    const minBid = minBids[key] ? Number(minBids[key]) : undefined;
+    if (!Number.isFinite(ask) || ask <= 0) {
+      setLocalError("Enter a valid ask price");
+      return;
+    }
+    setActionLoading(`list-${key}`);
+    setLocalError(null);
+    try {
+      await apiPost(
+        "/api/listings",
+        { tokenId: ticket.tokenId, serial: ticket.serial, askPriceHbar: ask, ...(minBid ? { minBidHbar: minBid } : {}) },
+        accountId
+      );
+      toast("Listed on resale marketplace", "success");
+      await refresh();
+      selectTab("selling");
+    } catch (e) {
+      setLocalError(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function cancelListing(listingId) {
+    setActionLoading(`cancel-${listingId}`);
+    try {
+      await apiDelete(`/api/listings/${listingId}`, accountId);
+      toast("Listing cancelled", "success");
+      await refresh();
+    } catch (e) {
+      setLocalError(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function acceptBid(bidId) {
+    setActionLoading(`accept-${bidId}`);
+    try {
+      const data = await apiPost(`/api/bids/${bidId}/accept`, {}, accountId);
+      if (data.balanceWarning) toast(data.balanceWarning, "pending");
+      else toast("Bid accepted — buyer must confirm", "success");
+      await refresh();
+    } catch (e) {
+      setLocalError(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function declineBid(bidId) {
+    setActionLoading(`decline-${bidId}`);
+    try {
+      await apiPost(`/api/bids/${bidId}/decline`, {}, accountId);
+      await refresh();
+    } catch (e) {
+      setLocalError(e.message);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function startConfirmBid(bidId) {
+    setConfirmBidId(bidId);
+    setLocalError(null);
+    const rp_context = await fetchRpContext();
+    setRequestConfig({
+      app_id: appId,
+      action,
+      rp_context,
+      allow_legacy_proofs: true,
+      environment,
+      preset: deviceLegacy(),
+    });
+    setWorldIdOpen(true);
+  }
+
+  async function handleVerify(proof) {
+    if (!confirmBidId) throw new Error("No bid selected");
+    const data = await apiPost(`/api/bids/${confirmBidId}/confirm`, { proof }, accountId);
+    toast(data.royaltyNote ?? "Purchase complete", "success");
+    setConfirmBidId(null);
+    await refresh();
+    return data;
+  }
+
+  if (!accountId && !loading) {
     return (
-      <main>
-        <h1>My Tickets</h1>
-        <p><a href="/login">Log in</a> or <a href="/onboard">create a wallet</a> to view your tickets.</p>
-      </main>
+      <PageTransition>
+        <PageHeader title="My Tickets" description="Your NFT tickets and resale activity." />
+        <AuthGate />
+      </PageTransition>
     );
   }
 
-  const acceptedBids = myBids.filter((b) => b.status === "accepted");
-
   return (
-    <main>
-      <h1>My Tickets</h1>
-      <p>
-        Account: {accountId} · Role: {wallet?.user?.role ?? "…"}
-        {notifications && (notifications.acceptedBidsToConfirm > 0 || notifications.pendingBidsOnYourListings > 0) && (
-          <span style={{ marginLeft: "0.5rem", color: "#b45309" }}>
-            ({notifications.acceptedBidsToConfirm} to confirm, {notifications.pendingBidsOnYourListings} new bids)
-          </span>
-        )}
-      </p>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+    <PageTransition>
+      <PageHeader
+        title="My Tickets"
+        description="Own tickets, sell yours, and track bids — browse resale listings on each event in the marketplace."
+      />
 
-      {acceptedBids.length > 0 && (
-        <section style={{ marginBottom: "1.5rem", padding: "1rem", background: "#fff8e6", borderRadius: 8 }}>
-          <h2>Winning bids — confirm purchase</h2>
-          <p style={{ fontSize: "0.9rem", color: "#555" }}>
-            World ID runs here to enforce the secondary purchase cap (one resale per verified human).
-          </p>
-          <ul style={{ listStyle: "none", padding: 0 }}>
-            {acceptedBids.map((b) => (
-              <li key={b.id} style={{ marginBottom: "0.5rem" }}>
-                #{b.serial} · {b.tokenId} · <strong>{b.bidPriceHbar} HBAR</strong>
-                <button type="button" onClick={() => startConfirmBid(b.id)} style={{ marginLeft: "0.5rem" }}>
-                  Verify World ID &amp; pay
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {(error || localError) && (
+        <div className="mb-6">
+          <Alert shakeKey={localError || error}>{localError || error}</Alert>
+        </div>
       )}
 
-      <section style={{ marginBottom: "1.5rem" }}>
-        <h2>Your resale listings</h2>
-        {sellerListings.length === 0 ? (
-          <p style={{ color: "#666" }}>No listings yet. List a ticket below.</p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0 }}>
-            {sellerListings.map((l) => (
-              <li key={l.id} style={{ padding: "1rem", marginBottom: "0.5rem", background: "#f0f4ff", borderRadius: 8 }}>
-                <strong>#{l.serial}</strong> · {l.tokenId} · Ask: {l.askPriceHbar} HBAR · {l.status}
-                <br />
-                Expires: {new Date(l.expiresAt).toLocaleString()}
-                {["open", "pending_settlement"].includes(l.status) && (
-                  <button type="button" onClick={() => cancelListing(l.id)} style={{ marginLeft: "0.5rem" }}>
-                    Cancel listing
-                  </button>
-                )}
-                {l.bids?.length > 0 && (
-                  <ul style={{ marginTop: "0.5rem" }}>
-                    {l.bids.map((b) => (
-                      <li key={b.id}>
-                        {b.bidderAccountId}: {b.bidPriceHbar} HBAR — <em>{b.status}</em>
-                        {b.status === "pending" && l.status === "open" && (
-                          <>
-                            <button type="button" onClick={() => acceptBid(b.id)} style={{ marginLeft: 4 }}>Accept</button>
-                            <button type="button" onClick={() => declineBid(b.id)} style={{ marginLeft: 4 }}>Decline</button>
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <div className="flex gap-1 border-b border-border mb-8 overflow-x-auto">
+        {TABS.map((t) => {
+          const buyerBadge = t.buyerBadge ? actionCount : 0;
+          const sellerBadge = t.sellerBadge ? bidCount : 0;
+          const badge = buyerBadge || sellerBadge;
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => selectTab(t.id)}
+              className={`relative px-4 py-3 text-sm tracking-wide whitespace-nowrap transition-colors ${
+                isActive ? "text-accent" : "text-muted hover:text-text"
+              } ${buyerBadge > 0 ? "border-t-2 border-pending" : ""}`}
+            >
+              {t.label}
+              {badge > 0 && (
+                <Badge variant="pending" className="ml-1.5">{badge}</Badge>
+              )}
+              {isActive && (
+                <motion.div
+                  layoutId="wallet-tab"
+                  className="absolute bottom-0 left-0 right-0 h-px bg-accent"
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
 
-      <section>
-        <h2>Tickets you own</h2>
-        {!wallet?.tickets?.length ? (
-          <p>No tickets yet. <a href="/">Browse marketplace</a> or <a href="/listings">resale listings</a></p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0 }}>
-            {wallet.tickets.map((t) => (
-              <li key={`${t.tokenId}-${t.serial}`} style={{ padding: "1rem", marginBottom: "0.5rem", background: "#f9f9f9", borderRadius: 8 }}>
-                <strong>#{t.serial}</strong> · {t.tokenId} · {t.status} · {t.acquisition}
-                <br />
-                Purchased: {t.acquiredAt} {t.priceHbar ? `for ${t.priceHbar} HBAR` : ""}
-                <details style={{ marginTop: "0.5rem" }}>
-                  <summary>Ownership history ({t.history?.length ?? 0})</summary>
-                  <ol>
-                    {(t.history ?? []).map((h) => (
-                      <li key={h.id}>
-                        {h.acquisition} → {h.owner_account_id} {h.price_hbar ? `@ ${h.price_hbar} HBAR` : ""}
-                        {h.tx_id && (
-                          <>
-                            {" "}
-                            <a href={`https://hashscan.io/testnet/transaction/${h.tx_id}`} target="_blank" rel="noopener noreferrer">tx</a>
-                          </>
-                        )}
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-                {t.status !== "sold_secondary" && !ticketHasActiveListing(t) && (
-                  <div style={{ marginTop: "0.5rem" }}>
-                    <label>
-                      Ask price (HBAR):{" "}
-                      <input
-                        type="number"
-                        value={askPrices[`${t.tokenId}-${t.serial}`] ?? 50}
-                        onChange={(e) =>
-                          setAskPrices({ ...askPrices, [`${t.tokenId}-${t.serial}`]: e.target.value })
-                        }
-                        style={{ width: 80 }}
-                      />
-                    </label>
-                    <button type="button" onClick={() => listForResale(t)} style={{ marginLeft: "0.5rem" }}>
-                      List for resale
-                    </button>
-                  </div>
-                )}
-                {ticketHasActiveListing(t) && (
-                  <p style={{ marginTop: "0.5rem", color: "#666", fontSize: "0.9rem" }}>Listed — manage bids above.</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {loading ? (
+        <CardSkeleton />
+      ) : (
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={fadeUpTransition}
+          >
+            {tab === "tickets" && (
+              <TicketsPanel
+                tickets={wallet?.tickets}
+                sellerListings={sellerListings}
+                askPrices={askPrices}
+                minBids={minBids}
+                onAskChange={(key, v) => setAskPrices({ ...askPrices, [key]: v })}
+                onMinBidChange={(key, v) => setMinBids({ ...minBids, [key]: v })}
+                onList={listForResale}
+                actionLoading={actionLoading}
+                ticketHasActiveListing={ticketHasActiveListing}
+              />
+            )}
 
-      {myBids.filter((b) => b.status === "pending").length > 0 && (
-        <section style={{ marginTop: "1.5rem" }}>
-          <h2>Your pending bids</h2>
-          <ul>
-            {myBids.filter((b) => b.status === "pending").map((b) => (
-              <li key={b.id}>
-                #{b.serial} · {b.bidPriceHbar} HBAR (ask {b.askPriceHbar}) — waiting for seller
-              </li>
-            ))}
-          </ul>
-        </section>
+            {tab === "selling" && (
+              <SellingPanel
+                listings={sellerListings}
+                salesHistory={salesHistory}
+                formerTickets={formerTickets}
+                onCancel={cancelListing}
+                onAccept={acceptBid}
+                onDecline={declineBid}
+                actionLoading={actionLoading}
+              />
+            )}
+
+            {tab === "bids" && (
+              <MyBidsPanel
+                pendingBids={pendingBids}
+                acceptedBids={acceptedBids}
+                highlightBid={highlightBid}
+                onConfirm={startConfirmBid}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
       )}
 
       {requestConfig && confirmBidId && (
         <IDKitRequestWidget
-          open={open}
-          onOpenChange={setOpen}
+          open={worldIdOpen}
+          onOpenChange={setWorldIdOpen}
           {...requestConfig}
           handleVerify={handleVerify}
-          onSuccess={() => setOpen(false)}
-          onError={(code) => setError(`World ID error: ${code}`)}
+          onSuccess={() => setWorldIdOpen(false)}
+          onError={(code) => setLocalError(`World ID error: ${code}`)}
         />
       )}
-    </main>
+    </PageTransition>
   );
+}
+
+function TicketsPanel({ tickets, askPrices, minBids, onAskChange, onMinBidChange, onList, actionLoading, ticketHasActiveListing }) {
+  if (!tickets?.length) {
+    return (
+      <p className="text-muted text-sm">
+        No tickets yet.{" "}
+        <Link href="/" className="text-accent">Buy on the marketplace</Link>
+        {" or "}
+        <Link href="/" className="text-accent">marketplace</Link>
+      </p>
+    );
+  }
+
+  return (
+    <ul className="space-y-4">
+      {tickets.map((t) => {
+        const key = `${t.tokenId}-${t.serial}`;
+        return (
+          <TicketCard
+            key={key}
+            ticket={t}
+            askPrice={askPrices[key]}
+            minBid={minBids[key]}
+            onAskChange={(v) => onAskChange(key, v)}
+            onMinBidChange={(v) => onMinBidChange(key, v)}
+            onList={() => onList(t)}
+            listLoading={actionLoading === `list-${key}`}
+            hasActiveListing={ticketHasActiveListing(t)}
+            faceValue={t.priceHbar}
+          />
+        );
+      })}
+    </ul>
+  );
+}
+
+function SellingPanel({
+  listings,
+  salesHistory,
+  formerTickets,
+  onCancel,
+  onAccept,
+  onDecline,
+  actionLoading,
+}) {
+  const offMarketFormer = (formerTickets ?? []).filter(
+    (f) =>
+      !(salesHistory ?? []).some(
+        (s) =>
+          s.tokenId === f.tokenId &&
+          s.serial === f.serial &&
+          s.buyerAccountId === f.soldTo &&
+          s.salePriceHbar === f.soldPriceHbar
+      )
+  );
+  const hasActive = listings.length > 0;
+  const hasHistory = (salesHistory?.length ?? 0) > 0 || offMarketFormer.length > 0;
+
+  if (!hasActive && !hasHistory) {
+    return (
+      <div className="text-center py-12 border border-dashed border-border rounded-lg">
+        <p className="text-muted text-sm mb-2">You have no active listings.</p>
+        <p className="text-muted text-xs">
+          List a ticket from <strong className="text-text">My tickets</strong> to start selling.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-10">
+      {hasActive && (
+        <section>
+          <h2 className="text-sm uppercase tracking-widest text-muted mb-4">Active listings</h2>
+          <ul className="space-y-4">
+            {listings.map((l) => (
+              <li key={l.id}>
+                <Card>
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <Link href={ticketDetailUrl(l.tokenId, l.serial)} className="font-medium hover:text-accent">
+                        #{l.serial}
+                      </Link>
+                      <p className="font-mono text-xs text-muted">{l.tokenId}</p>
+                    </div>
+                    <Badge>{l.status}</Badge>
+                  </div>
+                  <p className="text-sm text-muted mb-2">
+                    Ask {l.askPriceHbar} HBAR · Expires {new Date(l.expiresAt).toLocaleString()}
+                  </p>
+                  {["open", "pending_settlement"].includes(l.status) && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => onCancel(l.id)}
+                      loading={actionLoading === `cancel-${l.id}`}
+                      className="mb-2"
+                    >
+                      Cancel listing
+                    </Button>
+                  )}
+                  <BidList
+                    bids={l.bids}
+                    listingStatus={l.status}
+                    onAccept={onAccept}
+                    onDecline={onDecline}
+                    loading={actionLoading}
+                  />
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {hasHistory && (
+        <section>
+          <h2 className="text-sm uppercase tracking-widest text-muted mb-4">Sales history</h2>
+          <p className="text-xs text-muted mb-4">
+            Tickets you previously listed, bids you received, and sales you completed.
+          </p>
+          <ul className="space-y-4">
+            {(salesHistory ?? []).map((sale) => (
+              <li key={`sale-${sale.id}`}>
+                <MarketplaceSaleCard sale={sale} />
+              </li>
+            ))}
+            {offMarketFormer.map((ticket) => (
+              <li key={`former-${ticket.tokenId}-${ticket.serial}-${ticket.heldFrom}`}>
+                <FormerTicketCard ticket={ticket} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function normalizeTab(tab) {
+  if (tab === "actions" || tab === "buying" || tab === "browse") return tab === "browse" ? "tickets" : "bids";
+  if (tab && ["tickets", "selling", "bids"].includes(tab)) return tab;
+  return "tickets";
 }

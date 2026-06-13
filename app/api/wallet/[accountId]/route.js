@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { findByAccountId } from "../../../../src/db/users.js";
-import { listTicketsByOwner, getOwnershipHistory } from "../../../../src/db/tickets.js";
+import {
+  listTicketsByOwner,
+  listFormerTicketsByOwner,
+  getOwnershipHistory,
+} from "../../../../src/db/tickets.js";
 
 export async function GET(_request, { params }) {
   try {
@@ -20,7 +24,13 @@ export async function GET(_request, { params }) {
       history: getOwnershipHistory(t.token_id, t.serial),
     }));
 
-    return NextResponse.json({ user: { accountId: user.account_id, role: user.role }, tickets });
+    const formerTickets = listFormerTicketsByOwner(accountId);
+
+    return NextResponse.json({
+      user: { accountId: user.account_id, role: user.role },
+      tickets,
+      formerTickets,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load wallet";
     return NextResponse.json({ error: message }, { status: 400 });

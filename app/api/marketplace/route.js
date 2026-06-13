@@ -1,8 +1,32 @@
 import { NextResponse } from "next/server";
-import { listTokens } from "../../../src/db/tokens.js";
+import { listTokens, getToken } from "../../../src/db/tokens.js";
+import { countOpenListingsByToken } from "../../../src/db/listings.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
+    const tokenId = new URL(request.url).searchParams.get("tokenId");
+
+    if (tokenId) {
+      const token = getToken(tokenId);
+      if (!token) {
+        return NextResponse.json({ error: "Collection not found" }, { status: 404 });
+      }
+      return NextResponse.json({
+        collection: {
+          tokenId: token.token_id,
+          name: token.name,
+          symbol: token.symbol,
+          organizerAccountId: token.organizer_account_id,
+          faceValueHbar: token.primary_price_hbar,
+          mintedCount: token.minted_count,
+          maxSupply: token.max_supply,
+          remaining: token.max_supply - token.minted_count,
+          soldOut: token.minted_count >= token.max_supply,
+          resaleListingCount: countOpenListingsByToken(tokenId),
+        },
+      });
+    }
+
     const tokens = listTokens();
     const collections = tokens.map((token) => ({
       tokenId: token.token_id,
@@ -14,6 +38,7 @@ export async function GET() {
       maxSupply: token.max_supply,
       remaining: token.max_supply - token.minted_count,
       soldOut: token.minted_count >= token.max_supply,
+      resaleListingCount: countOpenListingsByToken(token.token_id),
     }));
 
     return NextResponse.json({ collections });

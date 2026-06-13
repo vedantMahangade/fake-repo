@@ -1,59 +1,52 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { IDKitRequestWidget, deviceLegacy } from "@worldcoin/idkit";
+import { useRouter, useSearchParams } from "next/navigation";
+import { motion } from "framer-motion";
+import PageHeader from "../components/layout/PageHeader.jsx";
+import PageTransition from "../components/layout/PageTransition.jsx";
+import WorldIdTrigger from "../components/world-id/WorldIdTrigger.jsx";
+import Card from "../components/ui/Card.jsx";
+import Alert from "../components/ui/Alert.jsx";
 import { setStoredAccountId } from "../lib/storage.js";
-import { fetchRpContext, getWorldIdClientConfig } from "../lib/worldId.js";
+import { getPostAuthPath, hashscanAccountUrl } from "../lib/routes.js";
+import { fadeUp, fadeUpTransition } from "../lib/motion.js";
+
+const roles = [
+  {
+    id: "purchaser",
+    title: "Purchaser",
+    description: "Buy tickets at face value and resell on the marketplace.",
+  },
+  {
+    id: "organizer",
+    title: "Organizer",
+    description: "Create collections, set face value, and receive royalties on resales.",
+  },
+];
 
 export default function OnboardingPage() {
-  const [open, setOpen] = useState(false);
-  const [requestConfig, setRequestConfig] = useState(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [role, setRole] = useState("purchaser");
+  const [duplicate, setDuplicate] = useState(false);
 
-  const { appId, action, environment } = getWorldIdClientConfig();
+  const next = searchParams.get("next");
 
   useEffect(() => {
-    if (result?.accountId && !result.duplicate) {
-      setStoredAccountId(result.accountId);
-    }
-  }, [result]);
-
-  if (!appId || !action) {
-    return (
-      <main>
-        <h1>Configuration required</h1>
-        <p>Set NEXT_PUBLIC_WORLD_APP_ID and NEXT_PUBLIC_WORLD_ACTION in your .env file.</p>
-      </main>
-    );
-  }
-
-  async function handleOpen() {
-    setError(null);
-    setLoading(true);
-    try {
-      const rp_context = await fetchRpContext();
-      setRequestConfig({
-        app_id: appId,
-        action,
-        rp_context,
-        allow_legacy_proofs: true,
-        environment,
-        preset: deviceLegacy(),
-      });
-      setOpen(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start verification");
-    } finally {
-      setLoading(false);
-    }
-  }
+    if (!result?.accountId || duplicate) return;
+    setStoredAccountId(result.accountId);
+    const path = getPostAuthPath(result.role ?? role, next);
+    const timer = setTimeout(() => router.push(path), 1200);
+    return () => clearTimeout(timer);
+  }, [result, duplicate, role, next, router]);
 
   async function handleVerify(proof) {
     setError(null);
+    setDuplicate(false);
     const res = await fetch("/api/verify-and-onboard", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -62,10 +55,8 @@ export default function OnboardingPage() {
     const data = await res.json();
     if (!res.ok) {
       if (res.status === 409) {
-        setResult({ duplicate: true, accountId: data.accountId, role: data.role });
-        throw new Error(
-          "This identity already has a wallet. Use Log in instead of creating a new one."
-        );
+        setDuplicate(true);
+        throw new Error("This identity already has a wallet. Use Log in instead.");
       }
       throw new Error(data.error ?? "Onboarding failed");
     }
@@ -74,82 +65,98 @@ export default function OnboardingPage() {
     return data;
   }
 
+  if (!process.env.NEXT_PUBLIC_WORLD_APP_ID || !process.env.NEXT_PUBLIC_WORLD_ACTION) {
+    return (
+      <PageTransition>
+        <PageHeader title="Configuration required" description="Set NEXT_PUBLIC_WORLD_APP_ID and NEXT_PUBLIC_WORLD_ACTION in your .env file." />
+      </PageTransition>
+    );
+  }
+
   return (
-    <main>
-      <h1>Create wallet</h1>
-      <p>
-        Verify you are a unique human to create a new Hedera ticket wallet.
-        Already have one? <Link href="/login">Log in</Link>
-      </p>
-
-      <fieldset style={{ marginTop: "1rem", border: "1px solid #ddd", borderRadius: 8, padding: "1rem" }}>
-        <legend>I am a…</legend>
-        <label style={{ display: "block", marginBottom: "0.5rem" }}>
-          <input
-            type="radio"
-            name="role"
-            value="purchaser"
-            checked={role === "purchaser"}
-            onChange={() => setRole("purchaser")}
-          />{" "}
-          Ticket purchaser — buy and resell tickets
-        </label>
-        <label style={{ display: "block" }}>
-          <input
-            type="radio"
-            name="role"
-            value="organizer"
-            checked={role === "organizer"}
-            onChange={() => setRole("organizer")}
-          />{" "}
-          Organizer — create collections and sell tickets
-        </label>
-      </fieldset>
-
-      <button type="button" onClick={handleOpen} disabled={loading} style={{ marginTop: "1rem", padding: "0.75rem 1.5rem" }}>
-        {loading ? "Preparing…" : "Verify & Create Wallet"}
-      </button>
-
-      {requestConfig && (
-        <IDKitRequestWidget
-          open={open}
-          onOpenChange={setOpen}
-          {...requestConfig}
-          handleVerify={handleVerify}
-          onSuccess={setResult}
-          onError={(code) => setError(`World ID error: ${code}`)}
+    <PageTransition>
+      <div className="max-w-lg mx-auto">
+        <PageHeader
+          title="Create wallet"
+          description="One verified human receives one Hedera account. This choice is permanent."
         />
-      )}
 
-      {error && (
-        <p style={{ color: "crimson", marginTop: "1rem" }}>
-          {error}
-          {result?.duplicate && (
-            <>
-              {" "}
-              <Link href="/login">Go to Log in →</Link>
-            </>
-          )}
+        <p className="text-sm text-muted mb-8">
+          Already have one?{" "}
+          <Link href={`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`} className="text-accent">
+            Log in
+          </Link>
         </p>
-      )}
 
-      {result?.accountId && !result.duplicate && (
-        <section style={{ marginTop: "2rem", padding: "1rem", background: "#f4f4f4", borderRadius: 8 }}>
-          <h2>Wallet created</h2>
-          <p><strong>Account ID:</strong> {result.accountId}</p>
-          <p><strong>Role:</strong> {result.role ?? role}</p>
-          {result.role === "organizer" || role === "organizer" ? (
-            <p><a href="/organizer">Go to Organizer dashboard →</a></p>
-          ) : (
-            <p><a href="/">Browse marketplace →</a></p>
-          )}
-          <p>
-            <a href={`https://hashscan.io/testnet/account/${result.accountId}`} target="_blank" rel="noopener noreferrer">
-              View on HashScan
-            </a>
-          </p>
-        </section>
-      )}
-    </main>
+        {!result && (
+          <>
+            <div className="grid gap-3 mb-8">
+              {roles.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setRole(r.id)}
+                  className={`relative text-left p-4 rounded-lg border transition-colors ${
+                    role === r.id
+                      ? "border-accent bg-accent/5"
+                      : "border-border bg-surface hover:border-white/10"
+                  }`}
+                >
+                  {role === r.id && (
+                    <motion.div
+                      layoutId="role-border"
+                      className="absolute inset-0 border border-accent rounded-lg pointer-events-none"
+                      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                    />
+                  )}
+                  <p className="font-medium mb-1">{r.title}</p>
+                  <p className="text-sm text-muted">{r.description}</p>
+                </button>
+              ))}
+            </div>
+
+            <WorldIdTrigger
+              label="Verify & Create Wallet"
+              onVerify={handleVerify}
+              onSuccess={setResult}
+              onError={setError}
+            />
+          </>
+        )}
+
+        {error && (
+          <div className="mt-6">
+            <Alert shakeKey={error}>
+              {error}
+              {duplicate && (
+                <>
+                  {" "}
+                  <Link href="/login" className="text-accent underline">Go to Log in</Link>
+                </>
+              )}
+            </Alert>
+          </div>
+        )}
+
+        {result?.accountId && !duplicate && (
+          <motion.div {...fadeUp} transition={fadeUpTransition} className="mt-8">
+            <Card variant="success" className="space-y-2">
+              <p className="text-success text-sm">Wallet created</p>
+              <p className="font-mono text-sm">{result.accountId}</p>
+              <p className="text-muted text-sm capitalize">{result.role ?? role}</p>
+              <p className="text-xs text-muted pt-2">Redirecting…</p>
+              <a
+                href={result.hashscanUrl ?? hashscanAccountUrl(result.accountId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-accent"
+              >
+                View on HashScan
+              </a>
+            </Card>
+          </motion.div>
+        )}
+      </div>
+    </PageTransition>
   );
 }

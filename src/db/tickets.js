@@ -25,6 +25,13 @@ export function updateTicketStatus(tokenId, serial, status) {
     .run(status, tokenId, serial);
 }
 
+/** Status when a ticket is owned but not actively listed (supports repeat resales). */
+export function ownedStatusForTicket(tokenId, serial) {
+  const owner = getCurrentOwner(tokenId, serial);
+  if (!owner) return "minted";
+  return owner.acquisition === "primary" ? "sold_primary" : "sold_secondary";
+}
+
 export function listTickets(tokenId, { status } = {}) {
   if (status) {
     return getDb()
@@ -93,6 +100,45 @@ export function listTicketsByOwner(ownerAccountId) {
        ORDER BY o.acquired_at DESC`
     )
     .all(ownerAccountId);
+}
+
+/** Tickets this account previously held and no longer owns. */
+export function listFormerTicketsByOwner(ownerAccountId) {
+  const rows = getDb()
+    .prepare(
+      `SELECT o.* FROM ownership o
+       WHERE o.owner_account_id = ?
+       ORDER BY o.acquired_at DESC`
+    )
+    .all(ownerAccountId);
+
+  const former = [];
+  for (const row of rows) {
+    const current = getCurrentOwner(row.token_id, row.serial);
+    if (current && current.id === row.id) continue;
+
+    const next = getDb()
+      .prepare(
+        `SELECT * FROM ownership
+         WHERE token_id = ? AND serial = ? AND id > ?
+         ORDER BY id ASC LIMIT 1`
+      )
+      .get(row.token_id, row.serial, row.id);
+
+    former.push({
+      tokenId: row.token_id,
+      serial: row.serial,
+      acquisition: row.acquisition,
+      heldFrom: row.acquired_at,
+      boughtPriceHbar: row.price_hbar,
+      heldUntil: next?.acquired_at ?? null,
+      soldPriceHbar: next?.price_hbar ?? null,
+      soldTo: next?.owner_account_id ?? null,
+      saleTxId: next?.tx_id ?? null,
+      history: getOwnershipHistory(row.token_id, row.serial),
+    });
+  }
+  return former;
 }
 
 export function countSecondaryByNullifier(nullifierHash) {

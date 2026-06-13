@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0a0b;
+  --color-surface: #141416;
+  --color-border: rgb(255 255 255 / 0.06);
+  --color-accent: #c9a227;
+  --color-accent-dim: #a68520;
+  --color-text: #f4f4f5;
+  --color-muted: #a1a1aa;
+  --color-pending: #d97706;
+  --color-success: #34d399;
+  --color-error: #f87171;
+
+  --font-sans: var(--font-display), system-ui, sans-serif;
+  --font-mono: var(--font-mono-var), ui-monospace, monospace;
+}
+
+:root {
+  --page-x: 1.5rem;
+  --section-y: 2.5rem;
+  --card-p: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --page-x: 2.5rem;
+  }
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  position: relative;
+  line-height: 1.6;
+}
+
+::selection {
+  background: rgb(201 162 39 / 0.25);
+  color: var(--color-text);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.03;
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgb(255 255 255 / 0.03) 25%,
+    rgb(255 255 255 / 0.07) 50%,
+    rgb(255 255 255 / 0.03) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer {
+    animation: none;
+    background: rgb(255 255 255 / 0.06);
+  }
+}

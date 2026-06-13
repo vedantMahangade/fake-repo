@@ -119,6 +119,41 @@ export function listOpenListings() {
   }));
 }
 
+function mapOpenListingRows(rows) {
+  return rows.map((row) => ({
+    ...mapListing(row),
+    tokenName: row.token_name,
+    tokenSymbol: row.token_symbol,
+    bidCount: countPendingBids(row.id),
+    highestBidHbar: getHighestPendingBid(row.id),
+  }));
+}
+
+export function listOpenListingsByToken(tokenId) {
+  expireStaleRecords();
+  const rows = getDb()
+    .prepare(
+      `SELECT l.*, t.name AS token_name, t.symbol AS token_symbol
+       FROM listings l
+       LEFT JOIN tokens t ON t.token_id = l.token_id
+       WHERE l.token_id = ? AND l.status = 'open' AND l.expires_at >= datetime('now')
+       ORDER BY l.created_at DESC`
+    )
+    .all(tokenId);
+  return mapOpenListingRows(rows);
+}
+
+export function countOpenListingsByToken(tokenId) {
+  expireStaleRecords();
+  const row = getDb()
+    .prepare(
+      `SELECT COUNT(*) AS c FROM listings
+       WHERE token_id = ? AND status = 'open' AND expires_at >= datetime('now')`
+    )
+    .get(tokenId);
+  return row?.c ?? 0;
+}
+
 export function listListingsBySeller(sellerAccountId) {
   expireStaleRecords();
   const rows = getDb()
@@ -132,6 +167,31 @@ export function listListingsBySeller(sellerAccountId) {
     bidCount: countPendingBids(row.id),
     highestBidHbar: getHighestPendingBid(row.id),
   }));
+}
+
+export function listSellerSalesHistory(sellerAccountId) {
+  expireStaleRecords();
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM listings
+       WHERE seller_account_id = ? AND status = 'sold'
+       ORDER BY created_at DESC`
+    )
+    .all(sellerAccountId);
+
+  return rows.map((row) => {
+    const bids = listBidsForListing(row.id);
+    const winningBid =
+      bids.find((b) => b.status === "completed") ??
+      bids.find((b) => b.status === "accepted");
+    return {
+      ...mapListing(row),
+      bids,
+      winningBid: winningBid ?? null,
+      salePriceHbar: winningBid?.bidPriceHbar ?? row.ask_price_hbar,
+      buyerAccountId: winningBid?.bidderAccountId ?? null,
+    };
+  });
 }
 
 export function updateListingStatus(id, status) {

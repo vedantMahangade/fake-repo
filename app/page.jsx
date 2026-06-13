@@ -1,94 +1,120 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getStoredAccountId } from "./lib/storage.js";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
+import PageHeader from "./components/layout/PageHeader.jsx";
+import PageTransition from "./components/layout/PageTransition.jsx";
+import CollectionCard from "./components/tickets/CollectionCard.jsx";
+import Alert from "./components/ui/Alert.jsx";
+import { CardSkeleton } from "./components/ui/Skeleton.jsx";
+import { useAccount } from "./hooks/useAccount.js";
+import { useMarketplace } from "./hooks/useMarketplace.js";
+import { useApiMutation } from "./hooks/useApi.js";
+import { apiPost } from "./lib/api.js";
+import { staggerContainer } from "./lib/motion.js";
+import { useMotionSafe } from "./lib/motion.js";
 
 export default function MarketplacePage() {
-  const [collections, setCollections] = useState([]);
-  const [error, setError] = useState(null);
-  const [accountId, setAccountId] = useState(null);
-  const [loading, setLoading] = useState(null);
-
-  async function loadMarketplace() {
-    const res = await fetch("/api/marketplace");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    setCollections(data.collections ?? []);
-  }
+  const router = useRouter();
+  const { accountId, isOrganizer, loading: accountLoading } = useAccount();
+  const { collections, loading, error, refresh } = useMarketplace();
+  const { mutate, error: buyError } = useApiMutation();
+  const [buyLoading, setBuyLoading] = useState(null);
+  const [buySuccess, setBuySuccess] = useState(null);
+  const [authPromptId, setAuthPromptId] = useState(null);
+  const { stagger } = useMotionSafe();
 
   useEffect(() => {
-    setAccountId(getStoredAccountId());
-    loadMarketplace().catch((e) => setError(e.message));
-  }, []);
+    if (!accountLoading && isOrganizer) {
+      router.replace("/events");
+    }
+  }, [accountLoading, isOrganizer, router]);
+
+  if (accountLoading || isOrganizer) {
+    return (
+      <PageTransition>
+        <CardSkeleton />
+      </PageTransition>
+    );
+  }
 
   async function buyTicket(tokenId) {
     if (!accountId) {
-      setError("Log in or create a wallet first");
+      setAuthPromptId(tokenId);
       return;
     }
-    setLoading(tokenId);
-    setError(null);
+    setAuthPromptId(null);
+    setBuySuccess(null);
+    setBuyLoading(tokenId);
     try {
-      const res = await fetch(`/api/tokens/${tokenId}/buy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ buyerAccountId: accountId }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      alert(`Ticket #${data.serial} minted and purchased! TX: ${data.txId}`);
-      await loadMarketplace();
-    } catch (e) {
-      setError(e.message);
+      const data = await mutate(
+        () => apiPost(`/api/tokens/${tokenId}/buy`, { buyerAccountId: accountId }),
+        { successMessage: "Ticket purchased" }
+      );
+      setBuySuccess({ ...data, tokenId });
+      await refresh();
+    } catch {
+      /* error in hook */
     } finally {
-      setLoading(null);
+      setBuyLoading(null);
     }
   }
 
   return (
-    <main>
-      <h1>Ticket Marketplace</h1>
-      <p>
-        Primary sales — each purchase mints a new ticket at the organizer&apos;s face value.
-        {!accountId && (
-          <>
-            {" "}
-            <a href="/login">Log in</a> or <a href="/onboard">create a wallet</a>
-          </>
-        )}
-      </p>
+    <PageTransition>
+      <PageHeader
+        title="Ticket Marketplace"
+        description="Browse events, buy at face value, or bid on fan resale listings within each collection."
+      />
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {(error || buyError) && (
+        <div className="mb-6">
+          <Alert shakeKey={buyError}>{error || buyError}</Alert>
+        </div>
+      )}
 
-      {collections.length === 0 ? (
-        <p>No collections yet. Organizers can create one at <a href="/organizer">/organizer</a>.</p>
-      ) : (
-        <ul style={{ listStyle: "none", padding: 0 }}>
-          {collections.map((item) => (
-            <li
-              key={item.tokenId}
-              style={{ padding: "1rem", marginBottom: "0.5rem", background: "#f9f9f9", borderRadius: 8 }}
-            >
-              <strong>{item.name}</strong> ({item.symbol})
-              <br />
-              Token: {item.tokenId} · Organizer: {item.organizerAccountId}
-              <br />
-              Face value: {item.faceValueHbar} HBAR
-              <br />
-              {item.remaining} of {item.maxSupply} tickets remaining
-              <br />
-              <button
-                type="button"
-                onClick={() => buyTicket(item.tokenId)}
-                disabled={item.soldOut || loading === item.tokenId}
-                style={{ marginTop: "0.5rem" }}
-              >
-                {item.soldOut ? "Sold out" : loading === item.tokenId ? "Minting…" : `Buy for ${item.faceValueHbar} HBAR`}
-              </button>
-            </li>
+      {!accountId && (
+        <p className="text-sm text-muted mb-8">
+          <Link href="/login" className="text-accent">Log in</Link>
+          {" or "}
+          <Link href="/onboard" className="text-accent">create a wallet</Link>
+          {" to purchase."}
+        </p>
+      )}
+
+      {loading ? (
+        <ul className="space-y-4">
+          {[1, 2].map((i) => (
+            <li key={i}><CardSkeleton /></li>
           ))}
         </ul>
+      ) : collections.length === 0 ? (
+        <p className="text-muted text-sm">
+          No collections yet.{" "}
+          <Link href="/events" className="text-accent">Organizers can create one</Link>
+        </p>
+      ) : (
+        <motion.ul
+          variants={stagger}
+          initial="initial"
+          animate="animate"
+          className="space-y-4"
+        >
+          {collections.map((item) => (
+            <CollectionCard
+              key={item.tokenId}
+              item={item}
+              accountId={accountId}
+              loading={loading === item.tokenId}
+              onBuy={buyTicket}
+              buySuccess={buySuccess}
+              authPromptId={authPromptId}
+            />
+          ))}
+        </motion.ul>
       )}
-    </main>
+    </PageTransition>
   );
 }

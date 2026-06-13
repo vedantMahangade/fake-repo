@@ -1,4 +1,21 @@
-import Nav from "./components/Nav.jsx";
+import { DM_Sans, IBM_Plex_Mono } from "next/font/google";
+import "./globals.css";
+import Providers from "./providers.jsx";
+import AppShell from "./components/layout/AppShell.jsx";
+import Nav from "./components/nav/Nav.jsx";
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-mono-var",
+  display: "swap",
+});
 
 export const metadata = {
   title: "World Cup Ticket",
@@ -7,10 +24,14 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body style={{ fontFamily: "system-ui, sans-serif", margin: 0, padding: "2rem", maxWidth: 800 }}>
-        <Nav />
-        {children}
+    <html lang="en" className={`${dmSans.variable} ${ibmPlexMono.variable}`}>
+      <body className="font-sans min-h-screen antialiased">
+        <Providers>
+          <AppShell>
+            <Nav />
+            {children}
+          </AppShell>
+        </Providers>
       </body>
     </html>
   );
